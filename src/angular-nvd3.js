@@ -1,6 +1,14 @@
-(function(){
+(function(window){
 
     'use strict';
+    var nv = window.nv;
+
+    // Node.js or CommonJS
+    if (typeof(exports) !== 'undefined') {
+        /* jshint -W020 */
+        nv = require('nvd3');
+        /* jshint +W020 */
+    }
 
     angular.module('nvd3', [])
 
@@ -24,7 +32,8 @@
                         deepWatchOptions: true,
                         deepWatchData: true,
                         deepWatchDataDepth: 2, // 0 - by reference (cheap), 1 - by collection item (the middle), 2 - by value (expensive)
-                        debounce: 10 // default 10ms, time silence to prevent refresh while multiple options changes at a time
+                        debounce: 10, // default 10ms, time silence to prevent refresh while multiple options changes at a time
+                        debounceImmediate: true // immediate flag for debounce function
                     };
 
                     //flag indicates if directive and chart is ready
@@ -37,7 +46,7 @@
                     scope.api = {
                         // Fully refresh directive
                         refresh: function(){
-                            scope.api.updateWithOptions(scope.options);
+                            scope.api.updateWithOptions();
                             scope.isReady = true;
                         },
 
@@ -51,8 +60,11 @@
                         // Update chart layout (for example if container is resized)
                         update: function() {
                             if (scope.chart && scope.svg) {
-                                scope.svg.datum(scope.data).call(scope.chart);
-                                // scope.chart.update();
+                                if (scope.options.chart.type === 'sunburstChart') {
+                                    scope.svg.datum(angular.copy(scope.data)).call(scope.chart);
+                                } else {
+                                    scope.svg.datum(scope.data).call(scope.chart);
+                                }
                             } else {
                                 scope.api.refresh();
                             }
@@ -67,6 +79,16 @@
 
                         // Update chart with new options
                         updateWithOptions: function(options){
+                            // set options
+                            if (!arguments.length) {
+                                options = scope.options;
+                            } else {
+                                scope.options = options;
+
+                                // return if options $watch is enabled
+                                if (scope._config.deepWatchOptions && !scope._config.disabled) return;
+                            }
+
                             // Clearing
                             scope.api.clearElement();
 
@@ -113,6 +135,7 @@
                                         'discretebar',
                                         'distX',
                                         'distY',
+                                        'focus',
                                         'interactiveLayer',
                                         'legend',
                                         'lines',
@@ -149,9 +172,12 @@
                                 }
 
                                 //TODO: need to fix bug in nvd3
+                                else if ((key === 'focusHeight') && options.chart.type === 'lineChart');
+                                else if ((key === 'focusHeight') && options.chart.type === 'lineWithFocusChart');
                                 else if ((key === 'xTickFormat' || key === 'yTickFormat') && options.chart.type === 'lineWithFocusChart');
                                 else if ((key === 'tooltips') && options.chart.type === 'boxPlotChart');
                                 else if ((key === 'tooltipXContent' || key === 'tooltipYContent') && options.chart.type === 'scatterChart');
+                                else if ((key === 'x' || key === 'y') && options.chart.type === 'forceDirectedGraph');
 
                                 else if (options.chart[key] === undefined || options.chart[key] === null){
                                     if (scope._config.extended) {
@@ -166,11 +192,7 @@
                             });
 
                             // Update with data
-                            if (options.chart.type === 'sunburstChart') {
-                                scope.api.updateWithData(angular.copy(scope.data));
-                            } else {
-                                scope.api.updateWithData(scope.data);
-                            }
+                            scope.api.updateWithData();
 
                             // Configure wrappers
                             if (options['title'] || scope._config.extended) configureWrapper('title');
@@ -211,6 +233,20 @@
 
                         // Update chart with new data
                         updateWithData: function (data){
+                            // set data
+                            if (!arguments.length) {
+                                if (scope.options.chart.type === 'sunburstChart') {
+                                    data = angular.copy(scope.data);
+                                } else {
+                                    data = scope.data;
+                                }
+                            } else {
+                                scope.data = data;
+
+                                // return if data $watch is enabled
+                                if (scope._config.deepWatchData && !scope._config.disabled) return;
+                            }
+
                             if (data) {
                                 // remove whole svg element with old data
                                 d3.select(element[0]).select('svg').remove();
@@ -218,7 +254,7 @@
                                 var h, w;
 
                                 // Select the current element to add <svg> element and to render the chart in
-                                scope.svg = d3.select(element[0]).append('svg');
+                                scope.svg = d3.select(element[0]).insert('svg', '.caption');
                                 if (h = scope.options.chart.height) {
                                     if (!isNaN(+h)) h += 'px'; //check if height is number
                                     scope.svg.attr('height', h).style({height: h});
@@ -231,6 +267,9 @@
                                 }
 
                                 scope.svg.datum(data).call(scope.chart);
+
+                                // update zooming if exists
+                                if (scope.chart && scope.chart.zoomRender) scope.chart.zoomRender();
                             }
                         },
 
@@ -299,7 +338,8 @@
                                         'rangeBands',
                                         'scatter',
                                         'open',
-                                        'close'
+                                        'close',
+                                        'node'
                                     ].indexOf(key) === -1) {
                                     if (options[key] === undefined || options[key] === null){
                                         if (scope._config.extended) options[key] = value();
@@ -405,7 +445,7 @@
                     if (scope._config.deepWatchOptions) {
                         scope.$watch('options', nvd3Utils.debounce(function(newOptions){
                             if (!scope._config.disabled) scope.api.refresh();
-                        }, scope._config.debounce, true), true);
+                        }, scope._config.debounce, scope._config.debounceImmediate), true);
                     }
 
                     // Watching on data changing
@@ -545,7 +585,7 @@
                             if (!horizontalOff) xDomain(useFixedDomain ? fixDomain(xScale.domain(), x_boundary) : xScale.domain());
                             if (!verticalOff) yDomain(useFixedDomain ? fixDomain(yScale.domain(), y_boundary) : yScale.domain());
                         }
-                        scope.chart.update();
+                        if (scope.chart) scope.chart.update();
                     };
 
                     // unzoomed event handler
@@ -559,7 +599,7 @@
                             if (!verticalOff) yDomain(y_boundary);
                         }
                         d3zoom.scale(scale).translate(translate);
-                        scope.chart.update();
+                        if (scope.chart) scope.chart.update();
                     };
 
                     // zoomend event handler
@@ -577,12 +617,35 @@
                         .on('zoom', zoomed)
                         .on('zoomend', zoomend);
 
-                    scope.svg.call(d3zoom);
+                    if (scope.svg) {
+                        scope.svg.call(d3zoom);
 
-                    d3zoom.scale(scale).translate(translate).event(scope.svg);
+                        d3zoom.scale(scale).translate(translate).event(scope.svg);
 
-                    if (unzoomEventType !== 'none') scope.svg.on(unzoomEventType, unzoomed);
+                        if (unzoomEventType !== 'none') scope.svg.on(unzoomEventType, unzoomed);
+                    }
+
+                    if (scope.chart)
+                        scope.chart.zoomRender = function(){
+                            // reset zoom scale and translate
+                            d3zoom.scale(scale).translate(translate);
+
+                            // update scale
+                            xScale = scope.chart.xAxis.scale();
+                            yScale = scope.chart.yAxis.scale();
+                            xDomain = scope.chart.xDomain || xScale.domain;
+                            yDomain = scope.chart.yDomain || yScale.domain;
+                            x_boundary = xScale.domain().slice();
+                            y_boundary = yScale.domain().slice();
+
+                            // update zoom scale
+                            d3zoom.x(xScale).y(yScale);
+
+                            scope.svg.call(d3zoom);
+
+                            if (unzoomEventType !== 'none') scope.svg.on(unzoomEventType, unzoomed);
+                        };
                 }
             };
         });
-})();
+})(window);
